@@ -1,0 +1,85 @@
+#!/usr/bin/python
+
+import json
+import os
+import sys
+
+from optparse import OptionParser
+
+class FileSystemWriter(object):
+  def makedirs(self, path):
+    if not os.path.exists(path):
+      os.makedirs(path)
+
+  def write_file(self, path, content):
+    with open(path, 'w') as f:
+      f.write(str(content))
+
+class MockFileSystemWriter(object):
+  def makedirs(self, path):
+    print('mkdir -p %s' % path)
+
+  def write_file(self, path, content):
+    print('echo "%s" > %s' % (content, path))
+      
+class JsonFileSystem(object):
+  def __init__(self, stream, fs):
+    self._data = json.load(stream, strict=False)
+    self._fs = fs
+
+  def generate(self, output_directory):
+    self._generate('', self._data, output_directory)
+
+  def _generate(self, key, value, path):
+    value_path = os.path.join(path, key)
+    if type({}) == type(value):
+      self._fs.makedirs(value_path)  
+      for (k,v) in value.iteritems():
+        self._generate(k, v, value_path)
+    elif type([]) == type(value):
+      self._fs.makedirs(value_path)  
+      for x in range(len(value)):
+        self._generate(str(x), value[x], value_path)
+    else:
+      def normalize(val):
+        if type(True) == type(val):
+          return str(val).lower()
+        return val  
+      self._fs.write_file(value_path, normalize(value))
+
+def _parse_options():
+  parser = OptionParser()
+  parser.add_option('-o', dest='output_directory')
+  parser.add_option('-c', dest='create', action='store_true')
+  parser.add_option('-d', dest='dry_run', action='store_true')
+  (options, args) = parser.parse_args()
+
+  if not options.output_directory:
+    raise KeyError('specify an output directory with -o')
+
+  class BadDirectoryError(KeyError):
+    def __init__(self, directory, issue):
+      KeyError.__init__(self, 'output directory [%s] %s' % (directory, issue))
+
+  target = options.output_directory
+  def bad_directory(message):
+    raise BadDirectoryError(target, message)  
+      
+  if not os.path.exists(target):
+    if options.create:
+      os.mkdir(target)
+    else:
+      bad_directory('does not exist')
+
+  if not os.path.isdir(target):
+    bad_directory('is not a directory')
+
+  if 0 != len(os.listdir(target)):
+    bad_directory('not empty')
+
+  return options
+    
+if '__main__' == __name__:
+  options = _parse_options()
+  json_fs = JsonFileSystem(sys.stdin, FileSystemWriter() if not options.dry_run else MockFileSystemWriter())
+  json_fs.generate(options.output_directory)
